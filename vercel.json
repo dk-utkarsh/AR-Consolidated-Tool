@@ -1,0 +1,17 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "version": 2,
+  "buildCommand": "npm run vercel-build",
+  "outputDirectory": "apps/web/dist",
+  "framework": null,
+  "devCommand": "npm run dev --workspace apps/web -- --port $PORT",
+  "rewrites": [
+    { "source": "/((?!api|assets).*)", "destination": "/index.html" }
+  ],
+  "functions": {
+    "api/**/*.ts": {
+      "memory": 1024,
+      "maxDuration": 10
+    }
+  }
+}

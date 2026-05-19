@@ -1,0 +1,52 @@
+# Render blueprint — connect this repo and Render will pick it up.
+# Docs: https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: ar-worker
+    runtime: docker
+    plan: free                         # bump to "starter" ($7/mo) for always-on + larger disk
+    dockerfilePath: ./worker/Dockerfile
+    dockerContext: .                   # build context is the monorepo root so workspaces resolve
+    healthCheckPath: /health
+    autoDeploy: true
+    disk:
+      name: ar-worker-data
+      mountPath: /var/data             # cheque CSVs, job artifacts. Survives restarts on paid plan.
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 8080
+      - key: WORKER_DATA_DIR
+        value: /var/data
+
+      # Set in the Render dashboard — never commit values here.
+      - key: WORKER_SHARED_SECRET
+        sync: false
+      - key: ZOHO_BOOKS_CLIENT_ID
+        sync: false
+      - key: ZOHO_BOOKS_CLIENT_SECRET
+        sync: false
+      - key: ZOHO_BOOKS_REFRESH_TOKEN
+        sync: false
+      - key: ZOHO_BOOKS_API_DOMAIN
+        sync: false
+      - key: ZOHO_BOOKS_ORGANIZATION_ID
+        sync: false
+      - key: ZOHO_BOOKS_CHEQUE_IN_HAND_ACCOUNT_ID
+        sync: false
+      - key: ZOHO_MAIL_HOST
+        sync: false
+      - key: ZOHO_MAIL_PORT
+        sync: false
+      - key: ZOHO_MAIL_USER
+        sync: false
+      - key: ZOHO_MAIL_PASSWORD
+        sync: false
+      - key: ZOHO_MAIL_FROM
+        sync: false
+      - key: TDS_TEST_RECIPIENT
+        sync: false
+      - key: MISTRAL_API_KEY
+        sync: false

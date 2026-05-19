@@ -1,0 +1,32 @@
+{
+  "name": "ar-consolidated",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Unified AR department app: TDS 194Q + Cheque Management + Uncategorized Suspense Payments. React + Node, deployed on Vercel + Render.",
+  "workspaces": [
+    "apps/*",
+    "worker"
+  ],
+  "scripts": {
+    "start:local": "concurrently -k -n worker,api,web -c blue,green,magenta \"npm run dev:worker\" \"npm run dev:api\" \"npm run dev:web\"",
+    "dev:web": "npm run dev --workspace apps/web",
+    "dev:worker": "npm run dev --workspace worker",
+    "dev:api": "tsx scripts/dev-api-server.mjs",
+    "build:web": "npm run build --workspace apps/web",
+    "build:worker": "npm run build --workspace worker",
+    "build:all": "npm run build:worker && npm run build:web",
+    "vercel-build": "npm run build --workspace apps/web",
+    "typecheck": "tsc -p tsconfig.json --noEmit && npm run typecheck --workspace apps/web && npm run typecheck --workspace worker"
+  },
+  "dependencies": {
+    "@vercel/node": "^3.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "concurrently": "^8.2.2",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "tsx": "^4.16.0",
+    "typescript": "^5.5.3"
+  }
+}

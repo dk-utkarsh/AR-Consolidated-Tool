@@ -1,0 +1,13 @@
+# Legacy Python projects — kept on disk for reference until parity is confirmed,
+# then deleted (Phase 7 cleanup). Vercel doesn't need them.
+194QTDSVendorWiseReportBifurcationAndEmailSend/
+ChequeManagementSystem - Copy/
+UncategorizedSuspensePayments-main/
+
+# Worker isn't deployed to Vercel — it lives on Render.
+worker/
+
+# Dev / test scratch
+worker/.devdata/
+worker/.test-cheques/
+*.log
