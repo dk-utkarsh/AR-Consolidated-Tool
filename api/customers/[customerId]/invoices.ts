@@ -1,9 +1,9 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { requireAuth } from "../../_shared/auth";
+import { requireModule } from "../../_shared/permissions";
 import { fetchOpenInvoices, getAccessToken } from "../../_shared/zoho";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (!requireAuth(req, res)) return;
+  if (!requireModule(req, res, "suspense")) return;
   const customerId = String(req.query.customerId ?? "");
   if (!customerId) {
     res.status(400).json({ error: "customerId is required" });

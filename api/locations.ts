@@ -1,12 +1,12 @@
 ﻿import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { requireAuth } from "./_shared/auth";
+import { requireModule } from "./_shared/permissions";
 import { cached } from "./_shared/cache";
 import { fetchLocations, getAccessToken } from "./_shared/zoho";
 
 const TTL_MS = 30 * 60 * 1000;
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (!requireAuth(req, res)) return;
+  if (!requireModule(req, res, "suspense")) return;
   try {
     const locations = await cached("locations", TTL_MS, async () => {
       const token = await getAccessToken();

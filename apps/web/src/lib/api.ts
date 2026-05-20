@@ -75,9 +75,13 @@ export async function refreshCache(): Promise<void> {
   await authedFetch("/refresh", { method: "POST" });
 }
 
+export type ModuleId = "tds194q" | "cheques" | "suspense";
+
 export interface MeResponse {
   email: string;
   canMatch: boolean;
+  /** Modules this user may access. Returned by GET /api/me. */
+  modules: ModuleId[];
 }
 
 export async function fetchMe(): Promise<MeResponse> {

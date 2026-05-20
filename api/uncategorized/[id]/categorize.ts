@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { requireMatchUser } from "../../_shared/auth";
+import { userCanAccessModule } from "../../_shared/permissions";
 import { clearCache } from "../../_shared/cache";
 import {
   categorizeAsCustomerPayment,
@@ -37,6 +38,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
   const session = requireMatchUser(req, res);
   if (!session) return;
+  if (!userCanAccessModule(session.email, "suspense")) {
+    res.status(403).json({ error: "You do not have access to the Uncategorized Suspense module" });
+    return;
+  }
 
   const txnId = String(req.query.id ?? "");
   if (!txnId) {

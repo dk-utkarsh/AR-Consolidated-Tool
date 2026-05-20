@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { requireAuth } from "../_shared/auth";
+import { requireModule } from "../_shared/permissions";
 import { config } from "../_shared/config";
 import { cached } from "../_shared/cache";
 import { fetchLedger, getAccessToken } from "../_shared/zoho";
@@ -13,7 +13,7 @@ const ACCOUNT_ALIASES: Record<string, string> = {
 };
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (!requireAuth(req, res)) return;
+  if (!requireModule(req, res, "suspense")) return;
 
   const accountParam = String(req.query.account ?? "");
   const accountId = ACCOUNT_ALIASES[accountParam] ?? accountParam;

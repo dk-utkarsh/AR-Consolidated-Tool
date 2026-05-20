@@ -1,6 +1,7 @@
 import { Router, type Response } from "express";
 import multer from "multer";
 import { requireSession, type SessionedRequest } from "../lib/session";
+import { requireModule } from "../lib/permissions";
 import { log } from "../lib/logger";
 import { pullChequeTransactions } from "../jobs/cheques/zoho-puller";
 import { buildDashboard, customerDetail } from "../jobs/cheques/fifo";
@@ -18,7 +19,7 @@ router.get("/health", (_req, res) => {
   res.json({ ok: true, module: "cheques" });
 });
 
-router.post("/refresh", requireSession, async (req: SessionedRequest, res: Response) => {
+router.post("/refresh", requireSession, requireModule("cheques"), async (req: SessionedRequest, res: Response) => {
   try {
     const result = await pullChequeTransactions();
     log.info("cheques.refresh.ok", { by: req.user?.email, rows: result.rows });
@@ -36,7 +37,7 @@ function asOfFromQuery(req: SessionedRequest): string {
     : new Date().toISOString().slice(0, 10);
 }
 
-router.get("/dashboard", requireSession, (req: SessionedRequest, res: Response) => {
+router.get("/dashboard", requireSession, requireModule("cheques"), (req: SessionedRequest, res: Response) => {
   try {
     res.json(buildDashboard(asOfFromQuery(req)));
   } catch (e) {
@@ -49,6 +50,7 @@ router.get("/dashboard", requireSession, (req: SessionedRequest, res: Response) 
 router.post(
   "/ocr",
   requireSession,
+  requireModule("cheques"),
   upload.single("image"),
   async (req: SessionedRequest, res: Response) => {
     if (!req.file) {
@@ -76,6 +78,7 @@ router.post(
 router.post(
   "/lookup",
   requireSession,
+  requireModule("cheques"),
   async (req: SessionedRequest, res: Response) => {
     const body = (req.body ?? {}) as {
       cheque_number?: unknown;
@@ -114,7 +117,7 @@ router.post(
   },
 );
 
-router.post("/create-payment", requireSession, async (req: SessionedRequest, res: Response) => {
+router.post("/create-payment", requireSession, requireModule("cheques"), async (req: SessionedRequest, res: Response) => {
   const body = (req.body ?? {}) as {
     cheque_number?: unknown;
     cheque_date?: unknown;
@@ -160,7 +163,7 @@ router.post("/create-payment", requireSession, async (req: SessionedRequest, res
   }
 });
 
-router.get("/customer/:name", requireSession, (req: SessionedRequest, res: Response) => {
+router.get("/customer/:name", requireSession, requireModule("cheques"), (req: SessionedRequest, res: Response) => {
   try {
     const name = decodeURIComponent(req.params.name);
     res.json(customerDetail(asOfFromQuery(req), name));

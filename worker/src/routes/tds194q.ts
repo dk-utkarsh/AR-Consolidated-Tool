@@ -4,6 +4,7 @@ import { Router, type Response } from "express";
 import multer from "multer";
 import ExcelJS from "exceljs";
 import { requireSession, type SessionedRequest } from "../lib/session";
+import { requireModule } from "../lib/permissions";
 import { workerDiskPath } from "../lib/store";
 import { log } from "../lib/logger";
 import { config } from "../lib/config";
@@ -47,6 +48,7 @@ router.get("/health", (_req, res) => {
 router.post(
   "/upload",
   requireSession,
+  requireModule("tds194q"),
   upload.single("file"),
   async (req: SessionedRequest, res: Response) => {
     if (!req.file) {
@@ -125,7 +127,7 @@ router.post(
 // ----------------------------------------------------------------
 // GET /tds194q/jobs/:id
 // ----------------------------------------------------------------
-router.get("/jobs/:id", requireSession, (req: SessionedRequest, res: Response) => {
+router.get("/jobs/:id", requireSession, requireModule("tds194q"), (req: SessionedRequest, res: Response) => {
   const job = getJob(req.params.id);
   if (!job) {
     res.status(404).json({ error: "unknown job" });
@@ -137,7 +139,7 @@ router.get("/jobs/:id", requireSession, (req: SessionedRequest, res: Response) =
 // ----------------------------------------------------------------
 // POST /tds194q/jobs/:id/send  — fire-and-forget
 // ----------------------------------------------------------------
-router.post("/jobs/:id/send", requireSession, (req: SessionedRequest, res: Response) => {
+router.post("/jobs/:id/send", requireSession, requireModule("tds194q"), (req: SessionedRequest, res: Response) => {
   const job = getJob(req.params.id);
   if (!job) {
     res.status(404).json({ error: "unknown job" });
@@ -217,6 +219,7 @@ async function runSendBlast(jobId: string): Promise<void> {
 router.get(
   "/jobs/:id/preview/:filename",
   requireSession,
+  requireModule("tds194q"),
   async (req: SessionedRequest, res: Response) => {
     const job = getJob(req.params.id);
     if (!job) {
@@ -304,6 +307,7 @@ router.get(
 router.get(
   "/jobs/:id/download/:filename",
   requireSession,
+  requireModule("tds194q"),
   (req: SessionedRequest, res: Response) => {
     const job = getJob(req.params.id);
     if (!job) {
