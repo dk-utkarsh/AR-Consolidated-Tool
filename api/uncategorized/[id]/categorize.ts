@@ -85,12 +85,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return;
     }
     const totalApplied = invoices.reduce((s, i) => s + i.amount_applied, 0);
-    if (Math.abs(totalApplied - amount) > 0.01) {
+    if (totalApplied > amount + 0.01) {
       res.status(400).json({
-        error: `Sum of applied amounts (${totalApplied}) does not equal deposit amount (${amount})`,
+        error: `Sum of applied amounts (${totalApplied}) cannot exceed deposit amount (${amount})`,
       });
       return;
     }
+    // If totalApplied < amount, Zoho records the difference as an unapplied
+    // customer credit (i.e. customer advance) on the payment.
   } else {
     // Advance: ignore any invoice rows the client sent; the deposit stays
     // unapplied on the customer's account.

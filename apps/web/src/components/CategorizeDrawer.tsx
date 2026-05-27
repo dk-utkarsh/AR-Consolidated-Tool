@@ -76,15 +76,10 @@ export function CategorizeDrawer({ open, bankTxn, onClose, onMatched }: Props) {
   const depositAmount = Number(bankTxn?.amount ?? 0) || 0;
 
   useEffect(() => {
-    if (mode === "advance") {
-      setAdvanceAmount(depositAmount > 0 ? String(depositAmount) : "");
-    }
-  }, [mode, depositAmount]);
+    setAdvanceAmount("");
+  }, [mode]);
 
-  const parsedAdvance = Number(advanceAmount);
-  const advanceValid =
-    mode !== "advance" ||
-    (Number.isFinite(parsedAdvance) && parsedAdvance > 0 && parsedAdvance <= depositAmount + 0.01);
+  const parsedAdvance = Number.isFinite(Number(advanceAmount)) ? Number(advanceAmount) : 0;
   const totalApplied = useMemo(
     () =>
       Object.values(applied).reduce(
@@ -93,7 +88,7 @@ export function CategorizeDrawer({ open, bankTxn, onClose, onMatched }: Props) {
       ),
     [applied],
   );
-  const remaining = depositAmount - totalApplied;
+  const remaining = depositAmount - totalApplied - (mode === "payment" ? parsedAdvance : 0);
   const isExact = Math.abs(remaining) < 0.01;
 
   const onAutoFill = (inv: OpenInvoice) => {
@@ -113,21 +108,17 @@ export function CategorizeDrawer({ open, bankTxn, onClose, onMatched }: Props) {
           .map(([invoice_id, v]) => ({ invoice_id, amount_applied: Number(v) || 0 }))
           .filter((x) => x.amount_applied > 0);
         if (invoicesPayload.length === 0) throw new Error("Apply an amount to at least one invoice");
-        if (!isExact) throw new Error("Applied amounts must equal the deposit amount");
-      }
-      let amountToSend = depositAmount;
-      if (mode === "advance") {
-        if (!Number.isFinite(parsedAdvance) || parsedAdvance <= 0) {
-          throw new Error("Enter an advance amount greater than 0");
+        if (parsedAdvance < 0) throw new Error("Advance amount cannot be negative");
+        if (totalApplied + parsedAdvance > depositAmount + 0.01) {
+          throw new Error("Applied + advance cannot exceed deposit amount");
         }
-        if (parsedAdvance > depositAmount + 0.01) {
-          throw new Error("Advance amount cannot exceed the deposit amount");
+        if (!isExact) {
+          throw new Error("Applied + advance must equal the deposit amount");
         }
-        amountToSend = parsedAdvance;
       }
       await categorizeUncategorized(String(bankTxn.transaction_id), {
         customer_id: selectedCustomer.contact_id,
-        amount: amountToSend,
+        amount: depositAmount,
         date: String(bankTxn.date ?? ""),
         reference_number: bankTxn.reference_number ?? undefined,
         description: bankTxn.description ?? undefined,
@@ -225,27 +216,6 @@ export function CategorizeDrawer({ open, bankTxn, onClose, onMatched }: Props) {
             )}
           </div>
 
-          {selectedCustomer && mode === "advance" && (
-            <div>
-              <label className="text-xs font-medium text-slate-600">
-                Amount to map to Customer Advance ledger (₹)
-              </label>
-              <Input
-                type="number"
-                step="0.01"
-                min="0"
-                max={depositAmount}
-                placeholder={depositAmount > 0 ? String(depositAmount) : "0.00"}
-                value={advanceAmount}
-                onChange={(e) => setAdvanceAmount(e.target.value)}
-              />
-              <div className="mt-1 text-xs text-slate-500">
-                Defaults to the full deposit ({formatINR(depositAmount)}). Lower it to map only a
-                portion as advance — the rest will stay uncategorized.
-              </div>
-            </div>
-          )}
-
           {selectedCustomer && mode === "payment" && (
             <div>
               <label className="text-xs font-medium text-slate-600">Open Invoices</label>
@@ -260,6 +230,7 @@ export function CategorizeDrawer({ open, bankTxn, onClose, onMatched }: Props) {
                 </div>
               )}
               {invoices && invoices.length > 0 && (
+                <>
                 <div className="overflow-auto rounded-md border border-slate-200">
                   <table className="min-w-full text-sm">
                     <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
@@ -306,6 +277,26 @@ export function CategorizeDrawer({ open, bankTxn, onClose, onMatched }: Props) {
                     </tbody>
                   </table>
                 </div>
+                <div className="mt-3">
+                  <label className="text-xs font-medium text-slate-600">
+                    Customer Advance — amount to map to advance ledger (₹)
+                  </label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    max={depositAmount}
+                    placeholder="0.00"
+                    value={advanceAmount}
+                    onChange={(e) => setAdvanceAmount(e.target.value)}
+                  />
+                  <div className="mt-1 text-xs text-slate-500">
+                    Any portion of the deposit not applied to invoices. Recorded as an unapplied
+                    customer credit on the same payment. Leave blank if the full deposit goes to
+                    invoices.
+                  </div>
+                </div>
+                </>
               )}
             </div>
           )}
@@ -336,8 +327,12 @@ export function CategorizeDrawer({ open, bankTxn, onClose, onMatched }: Props) {
             {mode === "payment" ? (
               <>
                 <div className="flex justify-between">
-                  <span>Applied</span>
+                  <span>Applied to invoices</span>
                   <span className="tabular-nums">{formatINR(totalApplied)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Customer Advance (excess)</span>
+                  <span className="tabular-nums">{formatINR(parsedAdvance)}</span>
                 </div>
                 <div
                   className={`flex justify-between font-semibold ${
@@ -349,18 +344,10 @@ export function CategorizeDrawer({ open, bankTxn, onClose, onMatched }: Props) {
                 </div>
               </>
             ) : (
-              <>
-                <div className="flex justify-between">
-                  <span>Mapped to Customer Advance</span>
-                  <span className="tabular-nums">
-                    {formatINR(Number.isFinite(parsedAdvance) ? parsedAdvance : 0)}
-                  </span>
-                </div>
-                <div className="mt-1 text-xs text-slate-600">
-                  Will be saved as an <strong>unapplied customer advance</strong> — this amount
-                  becomes available as credit on the customer's account.
-                </div>
-              </>
+              <div className="mt-1 text-xs text-slate-600">
+                Will be saved as an <strong>unapplied customer advance</strong> — the full deposit
+                amount becomes available as credit on the customer's account.
+              </div>
             )}
           </div>
 
@@ -376,12 +363,7 @@ export function CategorizeDrawer({ open, bankTxn, onClose, onMatched }: Props) {
             </Button>
             <Button
               onClick={onSubmit}
-              disabled={
-                submitting ||
-                !selectedCustomer ||
-                (mode === "payment" && !isExact) ||
-                (mode === "advance" && !advanceValid)
-              }
+              disabled={submitting || !selectedCustomer || (mode === "payment" && !isExact)}
             >
               {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
               {mode === "payment" ? "Confirm Match" : "Save as Advance"}
