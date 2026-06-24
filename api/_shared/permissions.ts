@@ -14,13 +14,14 @@ import { requireAuth } from "./auth";
 // (backward compatible). A user listed with an empty module list has no
 // access at all.
 
-export const ALL_MODULES = ["tds194q", "cheques", "suspense"] as const;
+export const ALL_MODULES = ["tds194q", "cheques", "suspense", "compliance"] as const;
 export type ModuleId = (typeof ALL_MODULES)[number];
 
 export const MODULE_LABELS: Record<ModuleId, string> = {
   tds194q: "TDS 194Q",
   cheques: "Cheques",
   suspense: "Uncategorized Suspense",
+  compliance: "Compliance Tools",
 };
 
 // Forgiving aliases so the env var tolerates the names humans actually type.
@@ -37,6 +38,11 @@ const MODULE_ALIASES: Record<string, ModuleId> = {
   payments: "suspense",
   uncategorizedpayments: "suspense",
   uncategorisedpayments: "suspense",
+  compliance: "compliance",
+  compliancetools: "compliance",
+  complianceguard: "compliance",
+  gst: "compliance",
+  gst2b: "compliance",
 };
 
 function normalizeEmail(s: string): string {

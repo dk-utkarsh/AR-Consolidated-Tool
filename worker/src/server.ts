@@ -7,6 +7,7 @@ import { log } from "./lib/logger";
 import { runJob, type JobInput } from "./jobs/registry";
 import tds194qRouter from "./routes/tds194q";
 import chequesRouter from "./routes/cheques";
+import complianceRouter from "./routes/compliance";
 
 assertProductionSecrets();
 
@@ -41,6 +42,7 @@ app.get("/health", (_req: Request, res: Response) => {
 // Module routers (require session tokens, not HMAC — talked to directly by browser).
 app.use("/tds194q", tds194qRouter);
 app.use("/cheques", chequesRouter);
+app.use("/compliance", complianceRouter);
 
 // HMAC-signed admin / cron endpoint — used by Vercel routes & scheduled triggers.
 app.post("/jobs/run", requireSignedRequest, async (req: Request, res: Response) => {

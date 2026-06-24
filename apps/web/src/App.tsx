@@ -10,6 +10,7 @@ import { useHashTab } from "@/lib/useHashTab";
 const Tds194qModule = lazy(() => import("@/modules/tds194q"));
 const ChequesModule = lazy(() => import("@/modules/cheques"));
 const SuspenseModule = lazy(() => import("@/modules/suspense"));
+const ComplianceModule = lazy(() => import("@/modules/compliance"));
 
 function ModuleFallback() {
   return (
@@ -19,7 +20,7 @@ function ModuleFallback() {
   );
 }
 
-const MODULES = ["tds194q", "cheques", "suspense"] as const;
+const MODULES = ["tds194q", "cheques", "suspense", "compliance"] as const;
 
 export default function App() {
   const [authedEmail, setAuthedEmail] = useState<string | null>(
@@ -113,6 +114,9 @@ export default function App() {
             {modules.includes("suspense") && (
               <TabsTrigger value="suspense">Uncategorized Suspense</TabsTrigger>
             )}
+            {modules.includes("compliance") && (
+              <TabsTrigger value="compliance">Compliance Tools</TabsTrigger>
+            )}
           </TabsList>
 
           {modules.includes("tds194q") && (
@@ -135,6 +139,14 @@ export default function App() {
             <TabsContent value="suspense">
               <Suspense fallback={<ModuleFallback />}>
                 <SuspenseModule />
+              </Suspense>
+            </TabsContent>
+          )}
+
+          {modules.includes("compliance") && (
+            <TabsContent value="compliance">
+              <Suspense fallback={<ModuleFallback />}>
+                <ComplianceModule />
               </Suspense>
             </TabsContent>
           )}

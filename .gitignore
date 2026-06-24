@@ -38,6 +38,15 @@ venv/
 /194QTDSVendorWiseReportBifurcationAndEmailSend/
 /ChequeManagementSystem - Copy/
 /UncategorizedSuspensePayments-main/
+/dentalkart-gst-suite-master/
+
+# real compliance input data (large + sensitive — never push)
+/Non Complience/
+
+# dev scratch / repro scripts
+worker/_repro.mts
+worker/_verify_*.mts
+worker/_verify_out/
 
 # local dev scratch (real Zoho data cached during dev — never push)
 worker/.devdata/

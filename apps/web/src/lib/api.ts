@@ -75,7 +75,7 @@ export async function refreshCache(): Promise<void> {
   await authedFetch("/refresh", { method: "POST" });
 }
 
-export type ModuleId = "tds194q" | "cheques" | "suspense";
+export type ModuleId = "tds194q" | "cheques" | "suspense" | "compliance";
 
 export interface MeResponse {
   email: string;
