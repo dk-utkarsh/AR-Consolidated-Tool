@@ -7,6 +7,7 @@ import { requireModule } from "../lib/permissions";
 import { workerDiskPath } from "../lib/store";
 import { log } from "../lib/logger";
 import { generateReport, type ComplianceInputs } from "../jobs/compliance/report";
+import { clearWorkbookCache } from "../jobs/compliance/excel";
 import { createJob, getJob, patchJob, serializeJob } from "../jobs/compliance/store";
 import {
   generateSample, SAMPLE_FILENAMES, SAMPLE_KINDS, type SampleKind,
@@ -123,6 +124,7 @@ router.post(
         log.error("compliance.analyze.fail", { jobId: job.jobId, error: msg });
         patchJob(job.jobId, { state: "error", error: msg });
       } finally {
+        clearWorkbookCache(tmpPaths);
         cleanupUploads(tmpPaths);
       }
     });
@@ -232,6 +234,7 @@ router.post(
       log.error("gst2b.reconcile.fail", { error: msg });
       res.status(400).json({ success: false, error: msg });
     } finally {
+      clearWorkbookCache(tmpPaths);
       cleanupUploads(tmpPaths);
     }
   },

@@ -1,15 +1,17 @@
-// ComplianceGuard — Excel reading. Faithful TS port of app/readers.py.
-// Uses exceljs' streaming reader so the large (100MB+) sales workbook does not
-// have to be fully materialised the way a plain Workbook.load() would.
+// ComplianceGuard — Excel reading. Backed by SheetJS (xlsx).
+//
+// Previously this used exceljs' streaming reader to keep the (often 100MB+)
+// sales workbook out of the JS heap on the 512MB Render free tier. The worker
+// now runs on the Render Standard 2GB plan, so the streaming constraint is gone
+// and we use SheetJS instead: it parses large workbooks ~5-10x faster. The
+// parsed workbook is held in memory for the duration of a job (fine on 2GB).
 //
 // Reproduces two pandas behaviours the annexure logic depends on:
 //   * _auto_detect_header — pick the first of the first 5 rows whose non-empty
 //     cells exceed 50% of the sheet width (skips blank preamble rows).
 //   * duplicate-column mangling — pandas read_excel renames repeat headers to
 //     "Name.1", "Name.2"; so df.get("State") resolves to the FIRST "State".
-import fs from "node:fs";
-import { Readable } from "node:stream";
-import ExcelJS from "exceljs";
+import * as XLSX from "xlsx";
 import type { Cell, Row } from "./helpers";
 
 export interface SheetData {
@@ -19,39 +21,60 @@ export interface SheetData {
 }
 
 // A workbook source is either an in-memory buffer or a path to a file on disk.
-// Streaming straight from disk keeps the (often 100MB+) compressed file out of
-// the JS heap, which matters a lot on the 512MB Render instance.
 export type ExcelSource = Buffer | string;
 
-function sourceStream(src: ExcelSource): Readable {
-  return typeof src === "string" ? fs.createReadStream(src) : Readable.from(src);
-}
+// dense layout is faster + lighter for the large sheets we parse; cellDates so
+// date cells come back as JS Date (mirrors the old exceljs behaviour, which the
+// helpers' s()/num() already special-case). Styles/formulas/HTML are ignored —
+// we only ever read raw values.
+const READ_OPTS: XLSX.ParsingOptions = {
+  dense: true,
+  cellDates: true,
+  cellFormula: false,
+  cellHTML: false,
+  cellStyles: false,
+  cellText: false,
+  sheetStubs: false,
+};
 
-/** Normalise an exceljs cell value to a primitive we can reason about. */
-function cellValue(v: unknown): Cell {
-  if (v === null || v === undefined) return null;
-  if (v instanceof Date) return v;
-  const t = typeof v;
-  if (t === "number" || t === "string" || t === "boolean") return v as Cell;
-  if (t === "object") {
-    const o = v as Record<string, unknown>;
-    if ("result" in o) return cellValue(o.result);
-    if ("text" in o && typeof o.text === "string") return o.text;
-    if ("richText" in o && Array.isArray(o.richText)) {
-      return (o.richText as Array<{ text?: string }>).map((p) => p.text ?? "").join("");
-    }
-    if ("hyperlink" in o && "text" in o && typeof o.text === "string") return o.text;
-    if ("error" in o) return null;
+const AOA_OPTS: XLSX.Sheet2JSONOpts = {
+  header: 1,        // array-of-arrays
+  raw: true,        // underlying typed values, not formatted strings
+  defval: null,     // fill gaps with null so column indices stay aligned
+  blankrows: false, // drop fully-empty rows (buildSheet would drop them anyway)
+};
+
+// Parsed-workbook cache keyed by file path. report.ts reads the e-invoice and
+// e-way files under more than one candidate sheet set, so without this each
+// call would re-parse the whole workbook. Buffer sources aren't cached (no
+// stable key). Cleared per-job in the compliance route's finally blocks via
+// clearWorkbookCache(), alongside the temp-file cleanup.
+const wbCache = new Map<string, XLSX.WorkBook>();
+
+function loadWorkbook(src: ExcelSource): XLSX.WorkBook {
+  if (typeof src === "string") {
+    const hit = wbCache.get(src);
+    if (hit) return hit;
+    const wb = XLSX.readFile(src, READ_OPTS);
+    wbCache.set(src, wb);
+    return wb;
   }
-  return null;
+  return XLSX.read(src, READ_OPTS);
 }
 
-function rowToValues(rowValues: unknown): Cell[] {
-  // exceljs row.values is a 1-indexed sparse array; index 0 is unused.
-  if (!Array.isArray(rowValues)) return [];
-  const out: Cell[] = [];
-  for (let i = 1; i < rowValues.length; i++) out.push(cellValue(rowValues[i]));
-  return out;
+/** Drop cached workbooks. With no argument clears everything; otherwise only
+ *  the given paths (so one job's cleanup never evicts another job's entries). */
+export function clearWorkbookCache(paths?: string[]): void {
+  if (!paths) {
+    wbCache.clear();
+    return;
+  }
+  for (const p of paths) wbCache.delete(p);
+}
+
+function sheetToRaw(ws: XLSX.WorkSheet | undefined): Cell[][] {
+  if (!ws) return [];
+  return XLSX.utils.sheet_to_json(ws, AOA_OPTS) as Cell[][];
 }
 
 /** Max row width without spreading (spreading 100k+ args overflows the stack). */
@@ -116,123 +139,36 @@ function buildSheet(name: string, raw: Cell[][]): SheetData {
   return { name, columns, rows };
 }
 
-function matchesCandidate(name: string, candidates: string[]): boolean {
-  if (candidates.includes(name)) return true;
-  const lower = name.toLowerCase().trim();
-  return candidates.some((c) => c.toLowerCase().trim() === lower);
-}
-
-// exceljs' streaming WorkbookReader has a race (workbook-reader.js:303): when a
-// worksheet zip entry is parsed inline before xl/workbook.xml, `this.model` is
-// still undefined and it throws "Cannot read properties of undefined (reading
-// 'sheets')". The zip-entry ordering varies run-to-run, so the failure is
-// intermittent (~1 in 5). Each attempt re-streams from the in-memory buffer
-// (CPU-only, no I/O), so retrying is cheap and only happens on the rare miss.
-const STREAM_READ_RETRIES = 6;
-
-function isExceljsRaceError(e: unknown): boolean {
-  const m = (e as { message?: string } | null)?.message ?? "";
-  return m.includes("reading 'sheets'");
-}
-
-async function withStreamRetry<T>(fn: () => Promise<T>): Promise<T> {
-  let lastErr: unknown;
-  for (let attempt = 0; attempt < STREAM_READ_RETRIES; attempt++) {
-    try {
-      return await fn();
-    } catch (e) {
-      lastErr = e;
-      if (!isExceljsRaceError(e)) throw e;
-    }
+/** Resolve a sheet name by candidate priority: exact match first, then
+ *  case-insensitive, falling back to the first sheet — same as _find_sheet. */
+function chooseSheetName(names: string[], candidates: string[]): string {
+  for (const cand of candidates) {
+    if (names.includes(cand)) return cand;
   }
-  throw lastErr;
+  for (const cand of candidates) {
+    const cl = cand.toLowerCase().trim();
+    const hit = names.find((n) => n.toLowerCase().trim() === cl);
+    if (hit) return hit;
+  }
+  return names[0] ?? "";
 }
 
 /**
- * Read the best-matching sheet from an xlsx buffer.
+ * Read the best-matching sheet from an xlsx source.
  * Sheet priority follows the candidate order (exact match first, then
  * case-insensitive), falling back to the first sheet — same as _find_sheet.
  */
 export async function readSheet(source: ExcelSource, candidates: string[]): Promise<SheetData> {
-  return withStreamRetry(() => readSheetOnce(source, candidates));
-}
-
-async function readSheetOnce(source: ExcelSource, candidates: string[]): Promise<SheetData> {
-  const stream = sourceStream(source);
-  const reader = new ExcelJS.stream.xlsx.WorkbookReader(stream, {
-    worksheets: "emit",
-    sharedStrings: "cache",
-    hyperlinks: "ignore",
-    styles: "ignore",
-    entries: "ignore",
-  });
-
-  const parsed = new Map<string, SheetData>(); // by sheet name
-  let firstSheet: SheetData | null = null;
-  let sheetIndex = 0;
-
-  for await (const worksheet of reader) {
-    sheetIndex += 1;
-    const wsName = (worksheet as unknown as { name?: string }).name ?? `Sheet${sheetIndex}`;
-    const keep = firstSheet === null || matchesCandidate(wsName, candidates);
-    if (!keep) {
-      // Consume rows without storing to keep memory flat for big non-target sheets.
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      for await (const _row of worksheet) { /* skip */ }
-      continue;
-    }
-    const raw: Cell[][] = [];
-    for await (const row of worksheet) {
-      raw.push(rowToValues((row as unknown as { values: unknown }).values));
-    }
-    const sheet = buildSheet(wsName, raw);
-    parsed.set(wsName, sheet);
-    if (firstSheet === null) firstSheet = sheet;
-  }
-
-  // Resolve by candidate priority.
-  for (const cand of candidates) {
-    for (const [name, sheet] of parsed) {
-      if (name === cand) return sheet;
-    }
-    const cl = cand.toLowerCase().trim();
-    for (const [name, sheet] of parsed) {
-      if (name.toLowerCase().trim() === cl) return sheet;
-    }
-  }
-  if (firstSheet) return firstSheet;
-  return { name: "", columns: [], rows: [] };
+  const wb = loadWorkbook(source);
+  const name = chooseSheetName(wb.SheetNames, candidates);
+  return buildSheet(name, sheetToRaw(wb.Sheets[name]));
 }
 
 /** Read the first worksheet's rows as a raw 2-D array (no header processing). */
 export async function readFirstSheetRaw(source: ExcelSource): Promise<Cell[][]> {
-  return withStreamRetry(() => readFirstSheetRawOnce(source));
-}
-
-async function readFirstSheetRawOnce(source: ExcelSource): Promise<Cell[][]> {
-  const stream = sourceStream(source);
-  const reader = new ExcelJS.stream.xlsx.WorkbookReader(stream, {
-    worksheets: "emit",
-    sharedStrings: "cache",
-    hyperlinks: "ignore",
-    styles: "ignore",
-    entries: "ignore",
-  });
-  let firstRaw: Cell[][] | null = null;
-  for await (const worksheet of reader) {
-    if (firstRaw === null) {
-      const raw: Cell[][] = [];
-      for await (const row of worksheet) {
-        raw.push(rowToValues((row as unknown as { values: unknown }).values));
-      }
-      firstRaw = raw;
-    } else {
-      // Consume remaining sheets without storing so the reader finalises cleanly.
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      for await (const _row of worksheet) { /* skip */ }
-    }
-  }
-  return firstRaw ?? [];
+  const wb = loadWorkbook(source);
+  const first = wb.SheetNames[0];
+  return first ? sheetToRaw(wb.Sheets[first]) : [];
 }
 
 /** Build a {columns, rows} frame from raw rows given an explicit header index. */
