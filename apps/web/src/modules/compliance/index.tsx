@@ -3,7 +3,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import AnalyzeForm from "./components/AnalyzeForm";
 import ResultView from "./components/ResultView";
 import Gst2bReco from "./components/Gst2bReco";
-import PrepareData from "./components/PrepareData";
 import { analyze, getStatus } from "./api";
 import type { AnalyzeFiles, ComplianceJob } from "./types";
 
@@ -11,14 +10,28 @@ function ComplianceGuard() {
   const [job, setJob] = useState<ComplianceJob | null>(null);
   const [error, setError] = useState<string | null>(null);
   const pollRef = useRef<number | null>(null);
+  // The worker can briefly drop connections while restarting; don't alarm the
+  // user on a single failed poll. Only surface an error after several in a row.
+  const failuresRef = useRef(0);
 
   useEffect(() => {
     if (!job || (job.state !== "running" && job.state !== "queued")) return;
+    failuresRef.current = 0;
     const tick = async () => {
       try {
         setJob(await getStatus(job.job_id));
+        failuresRef.current = 0;
       } catch (e) {
-        setError((e as Error).message);
+        failuresRef.current += 1;
+        // ~6 consecutive failures (~9s) before giving up — long enough to ride
+        // out a worker restart, after which polling resumes and the backend
+        // reports the real job state (e.g. an "interrupted" error).
+        if (failuresRef.current >= 6) {
+          setError(
+            `Lost connection to the analysis service: ${(e as Error).message}. ` +
+            `The file may be too large for the server — try a smaller file or retry.`,
+          );
+        }
       }
     };
     pollRef.current = window.setInterval(tick, 1500);
@@ -69,15 +82,11 @@ function ComplianceGuard() {
 
 export default function ComplianceModule() {
   return (
-    <Tabs defaultValue="prepare">
+    <Tabs defaultValue="guard">
       <TabsList>
-        <TabsTrigger value="prepare">Prepare Data</TabsTrigger>
         <TabsTrigger value="guard">ComplianceGuard</TabsTrigger>
         <TabsTrigger value="gst2b">GST 2B Reco</TabsTrigger>
       </TabsList>
-      <TabsContent value="prepare">
-        <PrepareData />
-      </TabsContent>
       <TabsContent value="guard">
         <ComplianceGuard />
       </TabsContent>

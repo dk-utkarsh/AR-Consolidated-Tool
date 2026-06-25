@@ -4,17 +4,17 @@
 import path from "node:path";
 import ExcelJS from "exceljs";
 import { type Cell, type Row, s, num0, round2 } from "./helpers";
-import { readSheet, tryReadSheet, type SheetData } from "./excel";
+import { readSheet, tryReadSheet, type SheetData, type ExcelSource } from "./excel";
 import { prepareRawSales, prepareEinvoice, prepareEway } from "./preparation";
 import type { Frame } from "./types";
 import * as A from "./annexures";
 
 export interface ComplianceInputs {
-  sales: Buffer;
-  einvoice: Buffer;
-  ewaybill?: Buffer | null;
-  creditnote?: Buffer | null;
-  cnEinvoice?: Buffer | null;
+  sales: ExcelSource;
+  einvoice: ExcelSource;
+  ewaybill?: ExcelSource | null;
+  creditnote?: ExcelSource | null;
+  cnEinvoice?: ExcelSource | null;
 }
 
 export interface AnnexureMeta { key: string; desc: string; }

@@ -4,7 +4,7 @@
 import path from "node:path";
 import ExcelJS from "exceljs";
 import { type Cell, type Row, s, num0, round2, groupBy } from "../compliance/helpers";
-import { readFirstSheetRaw, frameFromRaw } from "../compliance/excel";
+import { readFirstSheetRaw, frameFromRaw, type ExcelSource } from "../compliance/excel";
 import type { Frame } from "../compliance/types";
 
 type ColMap = Record<string, string[]>;
@@ -66,8 +66,8 @@ function mapColumns(columns: string[], colMap: ColMap): Record<string, string | 
   return mapping;
 }
 
-async function loadWithHeader(buffer: Buffer, colMap: ColMap): Promise<{ frame: Frame; map: Record<string, string | null> }> {
-  const raw = await readFirstSheetRaw(buffer);
+async function loadWithHeader(source: ExcelSource, colMap: ColMap): Promise<{ frame: Frame; map: Record<string, string | null> }> {
+  const raw = await readFirstSheetRaw(source);
   const headerRow = findHeaderRow(raw.slice(0, 15));
   const sheet = frameFromRaw(raw, headerRow);
   return { frame: sheet, map: mapColumns(sheet.columns, colMap) };
@@ -93,7 +93,7 @@ export interface RecoSummary {
 export interface RecoResult { success: true; summary: RecoSummary; filename: string; }
 
 export async function runReconciliation(
-  buf2b: Buffer, bufPr: Buffer, outDir: string, idSeed: string,
+  buf2b: ExcelSource, bufPr: ExcelSource, outDir: string, idSeed: string,
 ): Promise<RecoResult> {
   const { frame: df2bRaw, map: m2b } = await loadWithHeader(buf2b, TWO_B_COLUMN_MAP);
   const { frame: dfPrRaw, map: mpr } = await loadWithHeader(bufPr, PR_COLUMN_MAP);

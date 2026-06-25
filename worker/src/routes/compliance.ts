@@ -15,19 +15,40 @@ import { runReconciliation } from "../jobs/gst2b/reconcile";
 import {
   generateGst2bSample, GST2B_SAMPLE_FILENAMES, GST2B_SAMPLE_KINDS, type Gst2bSampleKind,
 } from "../jobs/gst2b/samples";
-import { prepareAll, type PrepareInputs } from "../jobs/prepare/prepare";
-import {
-  createJob as createPrepJob, getJob as getPrepJob, patchJob as patchPrepJob,
-  serializeJob as serializePrepJob,
-} from "../jobs/prepare/store";
 
 const router = Router();
+
+// Uploads are streamed to a temp dir on disk rather than buffered in RAM.
+// On the 512MB Render instance, holding several 100MB+ workbooks in the heap
+// was enough to get the process OOM-killed mid-job; the readers stream these
+// files straight from disk instead. Temp files are deleted once the job ends.
+const UPLOAD_TMP = workerDiskPath("uploads");
 
 // Sales workbooks can be very large (100MB+); allow generous per-file limits.
 const upload = multer({
   limits: { fileSize: 300 * 1024 * 1024 },
-  storage: multer.memoryStorage(),
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => {
+      fs.mkdirSync(UPLOAD_TMP, { recursive: true });
+      cb(null, UPLOAD_TMP);
+    },
+  }),
 });
+
+/** Collect every uploaded temp-file path so it can be deleted after the job. */
+function uploadedPaths(files: Files): string[] {
+  return Object.values(files)
+    .flatMap((arr) => arr ?? [])
+    .map((f) => f.path)
+    .filter(Boolean);
+}
+
+/** Best-effort removal of temp upload files; never throws. */
+function cleanupUploads(paths: string[]): void {
+  for (const p of paths) {
+    try { fs.unlinkSync(p); } catch { /* already gone */ }
+  }
+}
 
 const ANALYZE_FIELDS = [
   { name: "sales_file", maxCount: 1 },
@@ -39,9 +60,9 @@ const ANALYZE_FIELDS = [
 
 type Files = Record<string, Express.Multer.File[] | undefined>;
 
-function firstBuffer(files: Files, field: string): Buffer | null {
+function firstPath(files: Files, field: string): string | null {
   const f = files[field]?.[0];
-  return f ? f.buffer : null;
+  return f ? f.path : null;
 }
 
 router.get("/health", (_req, res) => {
@@ -58,13 +79,16 @@ router.post(
   upload.fields(ANALYZE_FIELDS),
   async (req: SessionedRequest, res: Response) => {
     const files = (req.files ?? {}) as Files;
-    const sales = firstBuffer(files, "sales_file");
-    const einvoice = firstBuffer(files, "einvoice_file");
+    const tmpPaths = uploadedPaths(files);
+    const sales = firstPath(files, "sales_file");
+    const einvoice = firstPath(files, "einvoice_file");
     if (!sales) {
+      cleanupUploads(tmpPaths);
       res.status(400).json({ error: "missing file (multipart field 'sales_file')" });
       return;
     }
     if (!einvoice) {
+      cleanupUploads(tmpPaths);
       res.status(400).json({ error: "missing file (multipart field 'einvoice_file')" });
       return;
     }
@@ -78,9 +102,9 @@ router.post(
     const inputs: ComplianceInputs = {
       sales,
       einvoice,
-      ewaybill: firstBuffer(files, "ewaybill_file"),
-      creditnote: firstBuffer(files, "creditnote_file"),
-      cnEinvoice: firstBuffer(files, "cn_einvoice_file"),
+      ewaybill: firstPath(files, "ewaybill_file"),
+      creditnote: firstPath(files, "creditnote_file"),
+      cnEinvoice: firstPath(files, "cn_einvoice_file"),
     };
 
     log.info("compliance.analyze.start", { jobId: job.jobId, by: req.user?.email });
@@ -98,6 +122,8 @@ router.post(
         const msg = (e as Error).message;
         log.error("compliance.analyze.fail", { jobId: job.jobId, error: msg });
         patchJob(job.jobId, { state: "error", error: msg });
+      } finally {
+        cleanupUploads(tmpPaths);
       }
     });
 
@@ -165,85 +191,6 @@ router.get(
 );
 
 // ================================================================
-// Prepare Data — map raw exports to template shape, drop Cancelled/closed
-// ================================================================
-const PREPARE_FIELDS = [
-  { name: "sales_file", maxCount: 1 },
-  { name: "einvoice_file", maxCount: 1 },
-  { name: "creditnote_file", maxCount: 1 },
-  { name: "cn_einvoice_file", maxCount: 1 },
-  { name: "ewaybill_file", maxCount: 1 },
-];
-
-router.post(
-  "/prepare",
-  requireSession,
-  requireModule("compliance"),
-  upload.fields(PREPARE_FIELDS),
-  async (req: SessionedRequest, res: Response) => {
-    const files = (req.files ?? {}) as Files;
-    const inputs: PrepareInputs = {
-      sales: firstBuffer(files, "sales_file"),
-      einvoice: firstBuffer(files, "einvoice_file"),
-      creditnote: firstBuffer(files, "creditnote_file"),
-      cnEinvoice: firstBuffer(files, "cn_einvoice_file"),
-      ewaybill: firstBuffer(files, "ewaybill_file"),
-    };
-    if (!inputs.sales && !inputs.einvoice && !inputs.creditnote && !inputs.cnEinvoice && !inputs.ewaybill) {
-      res.status(400).json({ error: "upload at least one file to prepare" });
-      return;
-    }
-
-    const jobIdSeed = Date.now().toString(36);
-    const outDir = workerDiskPath(path.join("prepare", jobIdSeed));
-    fs.mkdirSync(outDir, { recursive: true });
-    const job = createPrepJob({ createdBy: req.user?.email, outDir });
-
-    log.info("compliance.prepare.start", { jobId: job.jobId, by: req.user?.email });
-
-    setImmediate(async () => {
-      patchPrepJob(job.jobId, { state: "running", pct: 5, msg: "Preparing files..." });
-      try {
-        const out = await prepareAll(inputs, outDir, (pct, msg) => {
-          patchPrepJob(job.jobId, { state: "running", pct, msg });
-        });
-        patchPrepJob(job.jobId, { state: "done", pct: 100, msg: "", files: out });
-        log.info("compliance.prepare.done", { jobId: job.jobId, files: out.length });
-      } catch (e) {
-        const msg = (e as Error).message;
-        log.error("compliance.prepare.fail", { jobId: job.jobId, error: msg });
-        patchPrepJob(job.jobId, { state: "error", error: msg });
-      }
-    });
-
-    res.json(serializePrepJob(job));
-  },
-);
-
-router.get("/prepare/jobs/:id", requireSession, requireModule("compliance"), (req: SessionedRequest, res: Response) => {
-  const job = getPrepJob(req.params.id);
-  if (!job) { res.status(404).json({ error: "unknown job" }); return; }
-  res.json(serializePrepJob(job));
-});
-
-router.get(
-  "/prepare/jobs/:id/download/:filename",
-  requireSession,
-  requireModule("compliance"),
-  (req: SessionedRequest, res: Response) => {
-    const job = getPrepJob(req.params.id);
-    if (!job) { res.status(404).json({ error: "unknown job" }); return; }
-    const filename = path.basename(req.params.filename);
-    const file = path.join(job.outDir, filename);
-    if (!file.startsWith(job.outDir) || !fs.existsSync(file)) {
-      res.status(404).json({ error: "file not found" });
-      return;
-    }
-    res.download(file, filename);
-  },
-);
-
-// ================================================================
 // GST 2B Reconciliation (synchronous — 2B vs Purchase Register)
 // ================================================================
 const GST2B_FIELDS = [
@@ -264,10 +211,11 @@ router.post(
   upload.fields(GST2B_FIELDS),
   async (req: SessionedRequest, res: Response) => {
     const files = (req.files ?? {}) as Files;
-    const file2b = firstBuffer(files, "file_2b");
-    const filePr = firstBuffer(files, "file_pr");
-    if (!file2b) { res.status(400).json({ error: "missing file (multipart field 'file_2b')" }); return; }
-    if (!filePr) { res.status(400).json({ error: "missing file (multipart field 'file_pr')" }); return; }
+    const tmpPaths = uploadedPaths(files);
+    const file2b = firstPath(files, "file_2b");
+    const filePr = firstPath(files, "file_pr");
+    if (!file2b) { cleanupUploads(tmpPaths); res.status(400).json({ error: "missing file (multipart field 'file_2b')" }); return; }
+    if (!filePr) { cleanupUploads(tmpPaths); res.status(400).json({ error: "missing file (multipart field 'file_pr')" }); return; }
 
     const idSeed = Date.now().toString(36);
     try {
@@ -283,6 +231,8 @@ router.post(
       const msg = (e as Error).message;
       log.error("gst2b.reconcile.fail", { error: msg });
       res.status(400).json({ success: false, error: msg });
+    } finally {
+      cleanupUploads(tmpPaths);
     }
   },
 );

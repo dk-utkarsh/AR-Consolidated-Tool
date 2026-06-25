@@ -7,6 +7,7 @@
 //     cells exceed 50% of the sheet width (skips blank preamble rows).
 //   * duplicate-column mangling — pandas read_excel renames repeat headers to
 //     "Name.1", "Name.2"; so df.get("State") resolves to the FIRST "State".
+import fs from "node:fs";
 import { Readable } from "node:stream";
 import ExcelJS from "exceljs";
 import type { Cell, Row } from "./helpers";
@@ -15,6 +16,15 @@ export interface SheetData {
   name: string;
   columns: string[];
   rows: Row[];
+}
+
+// A workbook source is either an in-memory buffer or a path to a file on disk.
+// Streaming straight from disk keeps the (often 100MB+) compressed file out of
+// the JS heap, which matters a lot on the 512MB Render instance.
+export type ExcelSource = Buffer | string;
+
+function sourceStream(src: ExcelSource): Readable {
+  return typeof src === "string" ? fs.createReadStream(src) : Readable.from(src);
 }
 
 /** Normalise an exceljs cell value to a primitive we can reason about. */
@@ -143,12 +153,12 @@ async function withStreamRetry<T>(fn: () => Promise<T>): Promise<T> {
  * Sheet priority follows the candidate order (exact match first, then
  * case-insensitive), falling back to the first sheet — same as _find_sheet.
  */
-export async function readSheet(buffer: Buffer, candidates: string[]): Promise<SheetData> {
-  return withStreamRetry(() => readSheetOnce(buffer, candidates));
+export async function readSheet(source: ExcelSource, candidates: string[]): Promise<SheetData> {
+  return withStreamRetry(() => readSheetOnce(source, candidates));
 }
 
-async function readSheetOnce(buffer: Buffer, candidates: string[]): Promise<SheetData> {
-  const stream = Readable.from(buffer);
+async function readSheetOnce(source: ExcelSource, candidates: string[]): Promise<SheetData> {
+  const stream = sourceStream(source);
   const reader = new ExcelJS.stream.xlsx.WorkbookReader(stream, {
     worksheets: "emit",
     sharedStrings: "cache",
@@ -195,12 +205,12 @@ async function readSheetOnce(buffer: Buffer, candidates: string[]): Promise<Shee
 }
 
 /** Read the first worksheet's rows as a raw 2-D array (no header processing). */
-export async function readFirstSheetRaw(buffer: Buffer): Promise<Cell[][]> {
-  return withStreamRetry(() => readFirstSheetRawOnce(buffer));
+export async function readFirstSheetRaw(source: ExcelSource): Promise<Cell[][]> {
+  return withStreamRetry(() => readFirstSheetRawOnce(source));
 }
 
-async function readFirstSheetRawOnce(buffer: Buffer): Promise<Cell[][]> {
-  const stream = Readable.from(buffer);
+async function readFirstSheetRawOnce(source: ExcelSource): Promise<Cell[][]> {
+  const stream = sourceStream(source);
   const reader = new ExcelJS.stream.xlsx.WorkbookReader(stream, {
     worksheets: "emit",
     sharedStrings: "cache",
@@ -247,12 +257,12 @@ export function frameFromRaw(raw: Cell[][], headerIdx: number): SheetData {
 
 /** Try several candidate sheet sets; return null if the file/sheet is absent. */
 export async function tryReadSheet(
-  buffer: Buffer | null | undefined,
+  source: ExcelSource | null | undefined,
   candidates: string[],
 ): Promise<SheetData | null> {
-  if (!buffer) return null;
+  if (!source) return null;
   try {
-    return await readSheet(buffer, candidates);
+    return await readSheet(source, candidates);
   } catch {
     return null;
   }

@@ -16,4 +16,9 @@ COPY --from=build /app/worker/dist ./worker/dist
 COPY --from=build /app/worker/package.json ./worker/package.json
 WORKDIR /app/worker
 EXPOSE 8080
+# Render's free/starter instances are 512MB. Cap V8's heap below that so a
+# genuinely oversized workbook fails with a clear "JavaScript heap out of
+# memory" in the logs (and aggressive GC) instead of being silently
+# SIGKILL'd by the kernel OOM-killer. Bump this if the instance plan grows.
+ENV NODE_OPTIONS=--max-old-space-size=448
 CMD ["node", "dist/server.js"]
