@@ -1,0 +1,27 @@
+name: Deploy to Droplet
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-droplet
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: SSH deploy to droplet
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run remote deploy script
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: 209.38.120.154
+          username: root
+          key: ${{ secrets.DROPLET_SSH_KEY }}
+          port: 22
+          command_timeout: 20m
+          script: |
+            set -e
+            bash /home/ubuntu/scripts/AR-Consolidated-Tool/scripts/deploy.sh
