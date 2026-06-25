@@ -52,6 +52,18 @@ export function createJob(j: Pick<ComplianceJob, "createdBy" | "outDir">): Compl
   return job;
 }
 
+/** True if this process is already running/queuing a compliance job. Used to
+ *  reject concurrent /analyze requests: two large workbooks parsed into one
+ *  worker heap is the most likely way to blow past the heap cap and OOM, even
+ *  with the per-file size threshold (the threshold is per file, not per
+ *  process). One analyze at a time keeps peak memory predictable. */
+export function hasActiveJob(): boolean {
+  for (const j of jobs.values()) {
+    if (j.state === "running" || j.state === "queued") return true;
+  }
+  return false;
+}
+
 export function getJob(id: string): ComplianceJob | undefined {
   const live = jobs.get(id);
   if (live) return live;

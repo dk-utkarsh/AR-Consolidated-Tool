@@ -7,8 +7,7 @@ import { requireModule } from "../lib/permissions";
 import { workerDiskPath } from "../lib/store";
 import { log } from "../lib/logger";
 import { generateReport, type ComplianceInputs } from "../jobs/compliance/report";
-import { clearWorkbookCache } from "../jobs/compliance/excel";
-import { createJob, getJob, patchJob, serializeJob } from "../jobs/compliance/store";
+import { createJob, getJob, patchJob, serializeJob, hasActiveJob } from "../jobs/compliance/store";
 import {
   generateSample, SAMPLE_FILENAMES, SAMPLE_KINDS, type SampleKind,
 } from "../jobs/compliance/samples";
@@ -93,6 +92,14 @@ router.post(
       res.status(400).json({ error: "missing file (multipart field 'einvoice_file')" });
       return;
     }
+    // Single-flight: two concurrent analyses would parse two large workbooks
+    // into the same worker heap and can OOM past the heap cap. Reject rather
+    // than risk killing the in-flight job too.
+    if (hasActiveJob()) {
+      cleanupUploads(tmpPaths);
+      res.status(429).json({ error: "Another analysis is already running. Please wait for it to finish, then try again." });
+      return;
+    }
 
     const jobIdSeed = Date.now().toString(36);
     const outDir = workerDiskPath(path.join("compliance", jobIdSeed));
@@ -124,7 +131,6 @@ router.post(
         log.error("compliance.analyze.fail", { jobId: job.jobId, error: msg });
         patchJob(job.jobId, { state: "error", error: msg });
       } finally {
-        clearWorkbookCache(tmpPaths);
         cleanupUploads(tmpPaths);
       }
     });
@@ -234,7 +240,6 @@ router.post(
       log.error("gst2b.reconcile.fail", { error: msg });
       res.status(400).json({ success: false, error: msg });
     } finally {
-      clearWorkbookCache(tmpPaths);
       cleanupUploads(tmpPaths);
     }
   },
