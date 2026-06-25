@@ -3,7 +3,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import AnalyzeForm from "./components/AnalyzeForm";
 import ResultView from "./components/ResultView";
 import Gst2bReco from "./components/Gst2bReco";
-import { analyze, getStatus } from "./api";
+import { analyze, getStatus, JobGoneError } from "./api";
 import type { AnalyzeFiles, ComplianceJob } from "./types";
 
 function ComplianceGuard() {
@@ -22,14 +22,26 @@ function ComplianceGuard() {
         setJob(await getStatus(job.job_id));
         failuresRef.current = 0;
       } catch (e) {
+        // Job record is gone -> the worker restarted and dropped this job.
+        // Terminal: stop polling and explain honestly (restart can be a new
+        // deployment OR hitting the memory limit on a large file).
+        if (e instanceof JobGoneError) {
+          if (pollRef.current) window.clearInterval(pollRef.current);
+          setError(
+            "The analysis was interrupted because the server restarted — this can be a " +
+            "new deployment finishing, or the server hitting its memory limit on a large " +
+            "file. Please run the analysis again. If it keeps failing, the file is likely " +
+            "too large for the current server.",
+          );
+          return;
+        }
         failuresRef.current += 1;
-        // ~6 consecutive failures (~9s) before giving up — long enough to ride
-        // out a worker restart, after which polling resumes and the backend
-        // reports the real job state (e.g. an "interrupted" error).
+        // ~6 consecutive network failures (~9s) before giving up — long enough
+        // to ride out a brief blip while the worker is briefly unreachable.
         if (failuresRef.current >= 6) {
           setError(
             `Lost connection to the analysis service: ${(e as Error).message}. ` +
-            `The file may be too large for the server — try a smaller file or retry.`,
+            `Please retry in a moment.`,
           );
         }
       }

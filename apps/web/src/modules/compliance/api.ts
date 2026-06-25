@@ -50,10 +50,22 @@ export async function analyze(files: AnalyzeFiles): Promise<ComplianceJob> {
   return jsonOrThrow<ComplianceJob>(res);
 }
 
+/** Thrown by getStatus when the worker no longer knows the job (HTTP 404). */
+export class JobGoneError extends Error {
+  constructor() {
+    super("job-interrupted");
+    this.name = "JobGoneError";
+  }
+}
+
 export async function getStatus(jobId: string): Promise<ComplianceJob> {
   const res = await fetch(url(`/compliance/jobs/${encodeURIComponent(jobId)}`), {
     headers: authHeaders(),
   });
+  // 404 here means the worker has no record of the job: it restarted (a new
+  // deployment, or being killed at its memory limit) and lost the in-progress
+  // job. This is terminal, not a transient network blip — surface it as such.
+  if (res.status === 404) throw new JobGoneError();
   return jsonOrThrow<ComplianceJob>(res);
 }
 
