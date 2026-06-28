@@ -43,6 +43,15 @@ venv/
 # real compliance input data (large + sensitive — never push)
 /Non Complience/
 
+# stray full-project duplicate (downloaded copy — never commit)
+/AccountsConsolidated-main/
+
+# Compliance Python engine: commit CODE only. Never the large test data
+# (contains a 128MB xlsx > GitHub's 100MB limit) or generated outputs.
+/dentalkart-gst-suite-master-UpdatedCodeNiranjanRaised/DataForComplienceReport/
+/dentalkart-gst-suite-master-UpdatedCodeNiranjanRaised/*.xlsx
+/dentalkart-gst-suite-master-UpdatedCodeNiranjanRaised/dentalkart-gst-suite-master/_run_outputs/
+
 # dev scratch / repro scripts
 worker/_repro.mts
 worker/_verify_*.mts

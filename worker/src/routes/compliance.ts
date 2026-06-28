@@ -6,13 +6,13 @@ import { requireSession, type SessionedRequest } from "../lib/session";
 import { requireModule } from "../lib/permissions";
 import { workerDiskPath } from "../lib/store";
 import { log } from "../lib/logger";
-import { generateReport, type ComplianceInputs } from "../jobs/compliance/report";
-import { clearWorkbookCache } from "../jobs/compliance/excel";
-import { createJob, getJob, patchJob, serializeJob } from "../jobs/compliance/store";
+import {
+  runComplianceViaPython, runGst2bViaPython, type CompliancePyInputs,
+} from "../jobs/compliance/pythonProxy";
+import { createJob, getJob, patchJob, serializeJob, hasActiveJob } from "../jobs/compliance/store";
 import {
   generateSample, SAMPLE_FILENAMES, SAMPLE_KINDS, type SampleKind,
 } from "../jobs/compliance/samples";
-import { runReconciliation } from "../jobs/gst2b/reconcile";
 import {
   generateGst2bSample, GST2B_SAMPLE_FILENAMES, GST2B_SAMPLE_KINDS, type Gst2bSampleKind,
 } from "../jobs/gst2b/samples";
@@ -93,6 +93,14 @@ router.post(
       res.status(400).json({ error: "missing file (multipart field 'einvoice_file')" });
       return;
     }
+    // Single-flight: two concurrent analyses would parse two large workbooks
+    // into the same worker heap and can OOM past the heap cap. Reject rather
+    // than risk killing the in-flight job too.
+    if (hasActiveJob()) {
+      cleanupUploads(tmpPaths);
+      res.status(429).json({ error: "Another analysis is already running. Please wait for it to finish, then try again." });
+      return;
+    }
 
     const jobIdSeed = Date.now().toString(36);
     const outDir = workerDiskPath(path.join("compliance", jobIdSeed));
@@ -100,7 +108,7 @@ router.post(
 
     const job = createJob({ createdBy: req.user?.email, outDir });
 
-    const inputs: ComplianceInputs = {
+    const inputs: CompliancePyInputs = {
       sales,
       einvoice,
       ewaybill: firstPath(files, "ewaybill_file"),
@@ -110,11 +118,13 @@ router.post(
 
     log.info("compliance.analyze.start", { jobId: job.jobId, by: req.user?.email });
 
-    // Fire-and-forget; the browser polls GET /compliance/jobs/:id.
+    // Fire-and-forget; the browser polls GET /compliance/jobs/:id. The actual
+    // analysis runs on the Python GST engine (see pythonProxy); we relay its
+    // progress and store the finished report under the job's outDir.
     setImmediate(async () => {
       patchJob(job.jobId, { state: "running", pct: 5, msg: "Reading Sales data..." });
       try {
-        const result = await generateReport(inputs, outDir, jobIdSeed, (pct, msg) => {
+        const result = await runComplianceViaPython(inputs, outDir, (pct, msg) => {
           patchJob(job.jobId, { state: "running", pct, msg });
         });
         patchJob(job.jobId, { state: "done", pct: 100, msg: "", result });
@@ -124,7 +134,6 @@ router.post(
         log.error("compliance.analyze.fail", { jobId: job.jobId, error: msg });
         patchJob(job.jobId, { state: "error", error: msg });
       } finally {
-        clearWorkbookCache(tmpPaths);
         cleanupUploads(tmpPaths);
       }
     });
@@ -219,9 +228,8 @@ router.post(
     if (!file2b) { cleanupUploads(tmpPaths); res.status(400).json({ error: "missing file (multipart field 'file_2b')" }); return; }
     if (!filePr) { cleanupUploads(tmpPaths); res.status(400).json({ error: "missing file (multipart field 'file_pr')" }); return; }
 
-    const idSeed = Date.now().toString(36);
     try {
-      const result = await runReconciliation(file2b, filePr, gst2bDir(), idSeed);
+      const result = await runGst2bViaPython(file2b, filePr, gst2bDir());
       log.info("gst2b.reconcile.ok", { by: req.user?.email, file: result.filename });
       res.json({
         success: true,
@@ -234,7 +242,6 @@ router.post(
       log.error("gst2b.reconcile.fail", { error: msg });
       res.status(400).json({ success: false, error: msg });
     } finally {
-      clearWorkbookCache(tmpPaths);
       cleanupUploads(tmpPaths);
     }
   },

@@ -20,6 +20,11 @@ export const config = {
   port: Number(withDefault("PORT", "8080")),
   dataDir: path.resolve(withDefault("WORKER_DATA_DIR", "./data")),
 
+  // Compliance tab is served by the Python GST engine (FastAPI). The worker's
+  // /compliance/* routes proxy to it. Default is the local dev port; set
+  // COMPLIANCE_PY_URL in production to the deployed Python service URL.
+  compliancePyUrl: withDefault("COMPLIANCE_PY_URL", "http://127.0.0.1:8091").replace(/\/$/, ""),
+
   // Vercel -> worker request signing. Must match WORKER_SHARED_SECRET on the API side.
   // Required in production; loose-checked in dev (see auth.ts).
   sharedSecret: clean(process.env.WORKER_SHARED_SECRET),

@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: dentalkart-gst-suite
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12"
+      - key: COMPLIANCE_OUTPUT_DIR
+        value: /tmp/compliance_outputs
+      - key: GST_OUTPUT_DIR
+        value: /tmp/gst_reco_outputs
