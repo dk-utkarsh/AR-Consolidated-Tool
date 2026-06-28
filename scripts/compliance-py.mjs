@@ -4,10 +4,11 @@
 // service (see ecosystem.config.cjs / render).
 //
 // Config (env, all optional):
-//   COMPLIANCE_PY_DIR   path to the python app dir (has app/main.py)
-//   COMPLIANCE_PY_PORT  port to listen on (default 8091; matches COMPLIANCE_PY_URL)
-//   PYTHON              python executable (default "python")
-import { spawn } from "node:child_process";
+//   COMPLIANCE_PY_DIR           path to the python app dir (has app/main.py)
+//   COMPLIANCE_PY_PORT          port to listen on (default 8091; matches COMPLIANCE_PY_URL)
+//   PYTHON                      python executable (default "python")
+//   COMPLIANCE_PY_SKIP_INSTALL  set to "1" to skip the auto pip-install on start
+import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import fs from "node:fs";
@@ -38,6 +39,27 @@ const env = {
 };
 fs.mkdirSync(env.COMPLIANCE_OUTPUT_DIR, { recursive: true });
 fs.mkdirSync(env.GST_OUTPUT_DIR, { recursive: true });
+
+// Auto-install Python deps before starting, so a fresh box (or a new
+// requirement) just works without a manual step. pip is idempotent — on an
+// already-satisfied env this is a quick no-op. Set COMPLIANCE_PY_SKIP_INSTALL=1
+// to skip (e.g. to speed up repeated local restarts).
+const reqFile = path.join(PY_DIR, "requirements.txt");
+if (process.env.COMPLIANCE_PY_SKIP_INSTALL !== "1" && fs.existsSync(reqFile)) {
+  console.log(`[compliance-py] installing requirements (set COMPLIANCE_PY_SKIP_INSTALL=1 to skip) ...`);
+  const r = spawnSync(
+    PYTHON,
+    ["-m", "pip", "install", "-r", "requirements.txt", "--disable-pip-version-check"],
+    { cwd: PY_DIR, env, stdio: "inherit" },
+  );
+  if (r.error) {
+    console.error(`[compliance-py] could not run pip (${r.error.message}); continuing — uvicorn will fail loudly if deps are missing.`);
+  } else if (r.status !== 0) {
+    console.error(`[compliance-py] pip install exited ${r.status}; continuing — uvicorn will fail loudly if deps are missing.`);
+  } else {
+    console.log(`[compliance-py] requirements ready.`);
+  }
+}
 
 console.log(`[compliance-py] starting uvicorn on 127.0.0.1:${PORT} (cwd: ${PY_DIR})`);
 
