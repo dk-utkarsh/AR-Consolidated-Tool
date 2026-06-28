@@ -8,10 +8,11 @@
     "worker"
   ],
   "scripts": {
-    "start:local": "concurrently -k -n worker,api,web -c blue,green,magenta \"npm run dev:worker\" \"npm run dev:api\" \"npm run dev:web\"",
+    "start:local": "concurrently -k -n py,worker,api,web -c cyan,blue,green,magenta \"npm run dev:compliance-py\" \"npm run dev:worker\" \"npm run dev:api\" \"npm run dev:web\"",
     "dev:web": "npm run dev --workspace apps/web",
     "dev:worker": "npm run dev --workspace worker",
     "dev:api": "tsx scripts/dev-api-server.mjs",
+    "dev:compliance-py": "node scripts/compliance-py.mjs",
     "build:web": "npm run build --workspace apps/web",
     "build:worker": "npm run build --workspace worker",
     "build:all": "npm run build:worker && npm run build:web",
