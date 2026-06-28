@@ -43,5 +43,23 @@ if [ -n "${WPID:-}" ]; then
   tr '\0' ' ' < "/proc/$WPID/cmdline"; echo
 fi
 
+# Compliance Python engine: pm2 (startOrReload above) launches ar-compliance-py,
+# which self-installs its Python deps on first start (~1 min) then serves on
+# :8091. Poll its health so the deploy log shows whether it actually came up —
+# this is the main visibility into it for anyone without shell access.
+echo "[deploy] waiting for compliance engine on :8091 (first start installs python deps) ..."
+CP_OK=""
+for _ in $(seq 1 36); do
+  if curl -fsS http://127.0.0.1:8091/health >/tmp/cphealth 2>/dev/null; then
+    CP_OK="yes"; echo "[deploy] compliance engine UP: $(cat /tmp/cphealth)"; break
+  fi
+  sleep 5
+done
+if [ -z "$CP_OK" ]; then
+  echo "[deploy] WARN: compliance engine not responding on :8091 yet."
+  echo "[deploy] recent ar-compliance-py logs:"
+  pm2 logs ar-compliance-py --lines 40 --nostream || true
+fi
+
 echo "[deploy] done."
 pm2 list

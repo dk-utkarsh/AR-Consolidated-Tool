@@ -36,5 +36,23 @@ module.exports = {
       max_restarts: 10,
       restart_delay: 2000,
     },
+    {
+      // Python GST compliance engine (FastAPI/uvicorn). The worker proxies the
+      // Compliance tab to it at COMPLIANCE_PY_URL (default http://127.0.0.1:8091).
+      // The launcher self-installs Python deps on start (PEP 668-safe, no venv
+      // or sudo needed), so this comes up purely from a deploy — no manual
+      // server steps. First start installs deps (~1 min); restarts are instant.
+      name: "ar-compliance-py",
+      cwd: ROOT,
+      script: "scripts/compliance-py.mjs",
+      interpreter: "node",
+      env: {
+        PYTHON: "python3",
+        COMPLIANCE_PY_PORT: "8091",
+        COMPLIANCE_PY_DIR: ROOT + "/dentalkart-gst-suite-master-UpdatedCodeNiranjanRaised/dentalkart-gst-suite-master",
+      },
+      max_restarts: 10,
+      restart_delay: 5000,
+    },
   ],
 };

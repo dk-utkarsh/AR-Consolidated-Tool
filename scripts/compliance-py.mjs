@@ -46,16 +46,29 @@ fs.mkdirSync(env.GST_OUTPUT_DIR, { recursive: true });
 // to skip (e.g. to speed up repeated local restarts).
 const reqFile = path.join(PY_DIR, "requirements.txt");
 if (process.env.COMPLIANCE_PY_SKIP_INSTALL !== "1" && fs.existsSync(reqFile)) {
+  const py = (args) => spawnSync(PYTHON, args, { cwd: PY_DIR, env, stdio: "inherit" });
   console.log(`[compliance-py] installing requirements (set COMPLIANCE_PY_SKIP_INSTALL=1 to skip) ...`);
-  const r = spawnSync(
-    PYTHON,
-    ["-m", "pip", "install", "-r", "requirements.txt", "--disable-pip-version-check"],
-    { cwd: PY_DIR, env, stdio: "inherit" },
-  );
+
+  // A bare server may not have pip yet — bootstrap it from the stdlib.
+  if (py(["-m", "pip", "--version"]).status !== 0) {
+    console.log(`[compliance-py] pip not found; bootstrapping via ensurepip ...`);
+    py(["-m", "ensurepip", "--upgrade"]);
+  }
+
+  const baseArgs = ["-m", "pip", "install", "-r", "requirements.txt", "--disable-pip-version-check"];
+  let r = py(baseArgs);
+  // Modern Debian/Ubuntu mark the system Python "externally managed" (PEP 668)
+  // and reject installs. Retry into the user site with --break-system-packages
+  // so no virtualenv or sudo is needed on the box.
+  if (!r.error && r.status !== 0) {
+    console.log(`[compliance-py] retrying install with --user --break-system-packages (PEP 668) ...`);
+    r = py([...baseArgs, "--user", "--break-system-packages"]);
+  }
+
   if (r.error) {
     console.error(`[compliance-py] could not run pip (${r.error.message}); continuing — uvicorn will fail loudly if deps are missing.`);
   } else if (r.status !== 0) {
-    console.error(`[compliance-py] pip install exited ${r.status}; continuing — uvicorn will fail loudly if deps are missing.`);
+    console.error(`[compliance-py] pip install failed (exit ${r.status}); continuing — uvicorn will fail loudly if deps are missing.`);
   } else {
     console.log(`[compliance-py] requirements ready.`);
   }
